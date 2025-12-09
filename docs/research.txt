@@ -1,0 +1,1403 @@
+Skip to content
+Chat history
+
+
+
+
+You said:
+I'd like to use Rust (without any Python) to run LLMs and TTS models.  i.e., only using Rust crates (and possibly C/C++ libraries via FFI).  What are the limitations of this approach?  Which LLMs and TTS models can I use with this approach?  
+ChatGPT said:
+
+Thought for 40s
+You’re basically asking for a Python-free runtime stack for both LLM and TTS: Rust binaries + Rust crates (+ optional C/C++ libs via FFI), running models locally.
+
+I’ll break it down as:
+
+What this architecture looks like in practice
+
+The main limitations vs Python ecosystems
+
+LLM options that fit your constraints
+
+TTS options that fit your constraints
+
+Concrete “recommended stacks” for you
+
+1. Architecture & constraints
+Requirements you’ve set:
+
+Runtime: Rust only (plus native libs via FFI), no Python interpreter running alongside.
+
+Use local models (LLMs + TTS) on your own hardware.
+
+You’re OK linking to:
+
+C/C++ engines (e.g. llama.cpp, ONNX Runtime) via Rust FFI.
+
+GPU runtimes (CUDA, ROCm, Metal) provided by those engines.
+
+So the architecture choices are:
+
+Pure Rust engines – examples:
+
+Candle: minimalist ML framework in Rust with CPU/GPU support and demos for Whisper, LLaMA2, T5, Phi, YOLO, Segment Anything, etc. 
+GitHub
++1
+
+mistral.rs: high-performance LLM inference platform built on Candle, with broad model support and OpenAI-compatible HTTP server. 
+Eric L Buehler
++2
+GitHub
++2
+
+Rust bindings to native engines:
+
+llama.cpp via crates like llama_cpp, llama-cpp-2, llama-cpp-rs – LLaMA-style models in GGUF. 
+Docs.rs
++2
+Crates.io
++2
+
+ONNX Runtime via crates like onnxruntime or ort (Rust wrappers over Microsoft’s ONNX Runtime). 
+Docs.rs
++2
+GitHub
++2
+
+TTS-specific Rust crates:
+
+piper-rs: pure-Rust implementation for Piper TTS models (rhasspy/piper-voices). 
+Crates.io
++1
+
+piper-tts-rust / other ONNX-based Piper wrappers using ort. 
+Crates.io
++1
+
+Candle’s built-in support for TTS models like MetaVoice-1B and Parler-TTS. 
+Hugging Face
+
+Everything above can be composed into one or more Rust daemons (gRPC/HTTP/OpenAI-style) + thin CLI clients, all without Python at runtime.
+
+2. Limitations of “Rust-only + FFI” vs Python
+(a) Model availability & conversion
+Most open-source models are released with PyTorch / safetensors checkpoints and Python examples.
+
+To use them in Rust you often need:
+
+A GGUF/GGML variant (for llama.cpp / rustformers llm / mistral.rs when using gguf).
+
+Or an ONNX export (for TTS and other models using onnxruntime/ort).
+
+Or a Candle loader + config for that architecture.
+
+That usually means running a one-time Python conversion script when a new model drops, even if you don’t use Python in production. If you want to be absolutely free of Python even at build time, your model menu shrinks to “whatever has already been converted and published in GGUF / ONNX / Candle-ready form.”
+
+(b) Ecosystem maturity & tooling
+Python still dominates:
+
+Finetuning frameworks (PEFT, LoRA/QLoRA ecosystems).
+
+Distributed inference frameworks (vLLM, TensorRT-LLM, DeepSpeed-MII).
+
+Experiment tracking, eval harnesses, etc.
+
+Rust has Candle and mistral.rs (with features like paged attention, tensor parallelism, LoRA, etc.), but the ecosystem is younger; you’ll do more “glue” work yourself. 
+Hugging Face
++1
+
+(c) GPU utilization & scale-out
+llama.cpp + mistral.rs + Candle are very fast on single GPUs, and mistral.rs now supports tensor parallelism (NCCL) and FlashAttention v3. 
+Hugging Face
+
+But you won’t get the “plug-and-play” cluster scale-out you’d get from vLLM / DeepSpeed / Ray-based stacks.
+
+For your homelab this may be OK, but if you wanted high-QPS multi-tenant serving at cloud scale, the Rust story is less pre-baked.
+
+(d) Training & fine-tuning
+Full training of large models in Rust is still exotic. Candle can be used to train, but most training recipes, optimizers, and scripts are Python-first. 
+Hugging Face
++1
+
+There is LoRA support in Candle (e.g. candle-lora, used with mistral.rs) and mistral.rs supports X-LoRA / AnyMoE for adapter / derivative models. 
+Reddit
++2
+GitHub
++2
+
+If you want to finetune regular LLaMA/Mistral/Qwen/Gemma, you’re likely to:
+
+Fine-tune in Python (PEFT/QLoRA/etc.),
+
+Then export to GGUF / safetensors / ONNX for inference in Rust.
+
+(e) TTS ecosystem is thinner
+Rust today has far fewer TTS frontends than Python (where you have Coqui TTS, Bark, XTTS, Parler-TTS pipelines, etc.).
+
+In practice, you’re mostly choosing between:
+
+Piper models (via piper-rs / Piper+ONNX). 
+Crates.io
++2
+GitHub
++2
+
+Candle’s examples (MetaVoice-1B, Parler-TTS). 
+Hugging Face
+
+Experimental or OS-specific TTS bindings.
+
+Things like multi-speaker cloning, expressive style tokens, emotional prosody are doable but less turnkey than Coqui / Bark pipelines.
+
+(f) Build & deployment complexity
+You’re trading Python’s “pip install hell” for:
+
+C/C++ toolchains, BLAS/Metal/CUDA, and sometimes cmake/ninja to build llama.cpp / ONNX Runtime.
+
+Larger static binaries if you pull everything in.
+
+Great once built, but a bit of yak-shaving upfront.
+
+3. LLMs you can run (no Python at runtime)
+3.1 Through llama.cpp bindings (llama_cpp, llama-cpp-2, llama-cpp-rs, etc.)
+Crates like llama_cpp and llama-cpp-2 are high-level bindings to llama.cpp’s C API. 
+Docs.rs
++2
+Crates.io
++2
+
+Anything that exists as a GGUF model supported by llama.cpp is fair game, e.g.:
+
+Meta LLaMA family: LLaMA 2, LLaMA 3, LLaMA 3.1/3.2, CodeLLaMA, etc.
+
+Mistral / Mixtral models (7B, 8x7B, 8x22B quantized variants).
+
+Qwen (2, 2.5, 3 families in GGUF).
+
+Gemma, Phi-2 / Phi-3, DeepSeek, Yi, Granite, many code models, etc.
+
+You’re bounded by:
+
+VRAM/CPU RAM,
+
+What the llama.cpp community has actually converted to GGUF.
+
+From Rust, you can:
+
+Load the model via the binding,
+
+Manage KV cache and sampling yourself,
+
+Or stand up an OpenAI-compatible HTTP endpoint and treat it like a local OpenAI.
+
+3.2 Through mistral.rs (Candle-based)
+mistral.rs is a Rust LLM engine on top of Candle, with:
+
+Asynchronous Rust API.
+
+OpenAI-compatible HTTP server.
+
+Support for GGUF, GGML, safetensors (depending on model & backend). 
+Eric L Buehler
++2
+GitHub
++2
+
+Current supported families include (not exhaustive):
+
+Mistral / Mixtral / Mistral 3 family
+
+LLaMA 2/3/4 (including some vision variants)
+
+Gemma / Gemma 2 / Gemma 3
+
+Qwen 2.5, Qwen 3, Qwen-VL variants
+
+Phi 2 / Phi 3 / Phi 3.5 / Phi-3 Vision
+
+StarCoder 2, GLM4, SmolLM3, Dia 1.6B, Idefics 2/3, Deepseek V2/V3, Granite 4.0, etc. 
+GitHub
++2
+Reddit
++2
+
+It also has:
+
+Tool-calling,
+
+Tensor parallelism (NCCL) and paged/FlashAttention for high-throughput GPU inference. 
+Hugging Face
+
+So if you’re okay with Candle + a bit of FFI for CUDA/Metal, you can run a huge swath of modern open-source models entirely from Rust.
+
+3.3 Through Candle directly
+Candle itself has examples and loaders for many architectures:
+
+LLaMA2, Falcon, StarCoder, Phi-1.5/2, T5, Whisper, YOLO, Segment Anything, etc. 
+Hugging Face
++2
+Gist of Rust
++2
+
+You can:
+
+Use Candle’s Transformer building blocks to hand-roll loaders for other HF models (loading from safetensors / PyTorch / ggml).
+
+Reuse the example CLIs (e.g., for LLaMA2 or Phi) and integrate them into your own code.
+
+This is the most “DIY” but also the most flexible, all in Rust.
+
+3.4 Through ONNX Runtime (onnxruntime / ort)
+If you get an LLM into ONNX (typically small/medium models), you can use:
+
+onnxruntime crate – safe wrapper over ONNX Runtime’s C API. 
+Docs.rs
++1
+
+ort crate – similar wrapper with nicer ergonomics & multiple backends. 
+GitHub
++2
+Ort
++2
+
+This is less common for big text-generation LLMs but often used for smaller models or components (embedders, classifiers, etc.) in Rust microservices.
+
+4. TTS models you can run (no Python at runtime)
+4.1 Piper TTS via piper-rs (pure Rust)
+piper-rs is designed to use Piper TTS models in Rust with a pure Rust implementation. It claims:
+
+Compatibility with all Piper TTS models (the rhasspy/piper-voices catalog).
+
+Multi-language support.
+
+High performance, CPU-friendly. 
+Crates.io
++1
+
+The voices live at Hugging Face under rhasspy/piper-voices and cover:
+
+Multiple languages and accents.
+
+Several voice qualities (small, medium, high-quality), male/female, etc.
+
+This is probably the cleanest “just Rust” TTS solution right now.
+
+4.2 Piper via ONNX (piper-tts-rust + ort)
+piper-tts-rust is another crate that exposes Piper models, but using an ONNX Runtime backend (ort). 
+Crates.io
++2
+GitHub
++2
+
+Pros:
+
+Hardware acceleration via ONNX Runtime (CUDA, DirectML, etc.).
+
+Still no Python at runtime: you link against ONNX Runtime’s C API.
+
+Cons:
+
+You’re back in “FFI to a heavy C++ runtime” territory.
+
+Slightly more complexity than pure piper-rs.
+
+4.3 Candle-based TTS (MetaVoice-1B, Parler TTS)
+Candle’s documentation explicitly lists MetaVoice-1B and Parler-TTS as supported text-to-speech models, alongside its other supported families. 
+Hugging Face
+
+That means you can:
+
+Load these TTS models with Candle in Rust,
+
+Use them for neural speech synthesis without Python.
+
+These are more “research-y” and less turnkey than Piper, but give you access to more modern neural TTS styles.
+
+4.4 Coqui-TTS via coqui-tts crate (trade-off)
+There is a coqui-tts crate on crates.io, described as bindings to the Coqui TTS Python library. 
+Crates.io
++1
+
+Caveats:
+
+These bindings typically expect a Python environment or the Coqui native libs.
+
+If you insist on no Python process at all, I’d avoid this route or treat it as “requires deep inspection.”
+
+5. Putting it together – concrete stacks & trade-offs
+Recommended LLM stack for you
+Given your hardware and Rust fluency, I’d structure it like this:
+
+Primary engine (Rust + GPU, multi-model):
+
+mistral.rs as the main LLM backend:
+
+Run an OpenAI-compatible HTTP server exposed on your LAN.
+
+Load your main “assistant” models (LLaMA 3.x, Mistral 3, Qwen3, Gemma3, DeepSeek, etc.) as GGUF or safetensors depending on what mistral.rs supports. 
+GitHub
++1
+
+Use its tool-calling and tensor-parallel features to spread across GPUs.
+
+Secondary engine (max model variety):
+
+llama.cpp via llama_cpp / llama-cpp-2:
+
+For “random GGUF models found on Hugging Face / LM Studio.”
+
+Good when you want to rapidly try new models that already have GGUF conversions, and you’re okay with a llama.cpp-style feature set. 
+Crates.io
++1
+
+Experimental / custom:
+
+Candle directly when you want:
+
+To load unusual architectures (T5, Whisper, YOLO, etc.),
+
+To experiment with your own small models or edge deployments (WASM). 
+Hugging Face
++2
+Gist of Rust
++2
+
+Recommended TTS stack
+Baseline TTS (lightweight, robust):
+
+Piper via piper-rs
+
+Pure Rust implementation, no Python, models are tiny enough for RPi-class devices. 
+Crates.io
++2
+GitHub
++2
+
+Great for narration, multi-language system prompts, etc.
+
+Upgraded voices & styles:
+
+Candle TTS demos: MetaVoice-1B, Parler-TTS
+
+Use these when you want more “modern” TTS quality and are fine deploying Candle alongside your LLM stack. 
+Hugging Face
++1
+
+High-perf TTS with ONNX:
+
+Piper + ONNX Runtime via piper-tts-rust + ort
+
+If you want to squeeze more performance using GPU / optimized kernels through ONNX Runtime. 
+Crates.io
++2
+GitHub
++2
+
+TL;DR
+A pure Rust + FFI stack for LLM + TTS is absolutely viable today.
+
+You’re mostly limited by:
+
+Availability of GGUF / ONNX / safetensors versions of the models you care about.
+
+Less mature training / finetuning / orchestration tooling vs Python.
+
+A comparatively smaller TTS ecosystem.
+
+What you can run includes:
+
+A huge slice of modern open models (LLaMA 2/3/4, Mistral/Mixtral, Qwen 2.5/3, Gemma, Phi 2/3/4-ish, DeepSeek, Granite, StarCoder 2, etc.) via mistral.rs and llama.cpp bindings. 
+GitHub
++3
+GitHub
++3
+Hugging Face
++3
+
+Solid TTS via Piper (piper-rs / ONNX) and Candle-integrated MetaVoice-1B / Parler-TTS. 
+Crates.io
++2
+GitHub
++2
+
+If you tell me which exact models you’re most interested in (e.g. “LLaMA 3.2 3B Instruct + DeepSeek-Coder + Piper en_US voice X”), I can sketch concrete Cargo.toml + code snippets and a simple HTTP API layout for a fully Rust microservice that exposes both chat completions and TTS.
+
+You said:
+I have found that Rust Yew/WASM front-ends are easy to build to replace Python/Gradio UIs.  I have also found that many existing Python-based approaches, often using docker, often fail to support newer Nvidia Blackwell GPUs/CUDA versions.  I have to rebuild python-tool-chain based approaches over and over again.  At the end of the day, Python, when I can get it to work is slow, doesn't leverage the highly parallel servers I have, and just does not scale.  As a Rust first programmer I have less experience with Python source code, idioms, standards, best-practices, dev environments and no interest in investing my time learning that.   I do not mind using Python to extract GGUF or other non-python representations, for C/C++/Rust use.  I am more comfortable with C/C++ (10+ years experience) and related build systems (conceptually, I have used dozens of build systems over many decades).  I do not like Python.  I also prefer Rust/WASM over typyscript or javascript.  Rust is more than adequate for my needs (parallelism, reliability/safety, performance, even UIs).
+ChatGPT said:
+
+Thought for 4 seconds
+That all makes sense, and honestly your constraints are very sane.
+
+Let me reframe your requirements in my own words and then sketch a concrete Rust-first stack that matches them:
+
+Runtime: Rust (plus C/C++ via FFI), no Python in production.
+
+UI: Rust/Yew/WASM in the browser, not Python/Gradio, minimal/no JS/TS.
+
+Workloads: LLM + TTS, making good use of multi-GPU / multi-node capacity.
+
+Tolerance for Python: OK offline to convert models → GGUF/ONNX/etc., but you don’t want to maintain Python systems.
+
+Hardware: Newer Nvidia GPUs (including Blackwell), so you keep hitting “Python + old CUDA + weird docker image” walls.
+
+Preference: Rust concurrency, reliability, and explicit control > Python “ecosystem magic”.
+
+Given that, here’s how I’d structure things.
+
+1. High-level architecture
+Think:
+
+Rust microservices for inference (LLM + TTS), one per model family or per role.
+
+Rust/Yew/WASM front-ends talking to those services via HTTP/WS (no Gradio).
+
+Thin C/C++ FFI layer only where absolutely needed (llama.cpp, ONNX Runtime, maybe CUDA/BLAS bindings).
+
+Zero Python in the hot path. Python is only used once per model for format conversion (HF → GGUF / safetensors / ONNX), then thrown away.
+
+Logical components
+LLM servers
+
+Primary: mistral.rs (on top of Candle).
+
+Secondary: Rust bindings to llama.cpp for “random GGUF models from HuggingFace/LMStudio”.
+
+TTS servers
+
+Baseline: piper-rs (pure Rust) for robust, light CPU TTS.
+
+Higher-end: Candle TTS demos (MetaVoice-1B / Parler-TTS) or Piper+ONNX via ort.
+
+Gateway & orchestration
+
+Rust service that exposes:
+
+OpenAI-compatible HTTP API for chat/LLM & TTS, and
+
+A “task routing” API: choose model, device, or node based on load, capabilities, latency.
+
+Rust/WASM UIs (Yew)
+
+One UI per use-case (your existing approach) rather than a giant “modeful” app.
+
+Each UI directly calls your Rust inference gateway via fetch/WebSocket.
+
+2. Why this side-steps the “Python/Gradio/docker hell”
+CUDA / Blackwell drift
+Most of your problems with Python + Blackwell are:
+
+Prebuilt docker images pinned to old CUDA.
+
+Python wheels that lag behind new GPU architecture support.
+
+Opaque dependency trees (PyTorch + CUDA + driver combos).
+
+In the Rust-first setup:
+
+Candle, mistral.rs, and llama.cpp build against:
+
+Whatever CUDA toolkit you have installed (or cuBLAS/cuDNN directly),
+
+Or use a CPU/Metal backend.
+
+You maintain your own base docker image:
+
+FROM nvidia/cuda:X.Y.Z-devel-ubuntuXX.XX (or equivalent),
+
+Install Rust, CMake, and build your Rust + C/C++ code once per CUDA version.
+
+When NVIDIA drops a new CUDA or you update drivers:
+
+You rebuild your Rust containers,
+
+Not chase random Python wheels.
+
+You’ve basically moved the complexity to a place you’re comfortable with: explicit C/C++ build systems and Rust binaries.
+
+3. Rust-native LLM layer
+Option A: Use mistral.rs as your main “LLM engine”
+Why:
+
+Candle-based, written in Rust.
+
+Supports a wide set of models (Mistral, Mixtral, Qwen, LLaMA, Gemma, DeepSeek, etc.) in GGUF/safetensors forms.
+
+Has an OpenAI-compatible HTTP server out of the box.
+
+Has support for paged attention / FlashAttention / tensor parallelism on GPUs.
+
+How to use it in your world:
+
+On each GPU machine, run a mistral.rs daemon:
+
+Config defines:
+
+Which model(s) live on which GPU.
+
+Quantization level.
+
+Max concurrent requests / batch size.
+
+Expose them behind:
+
+A Rust router/proxy that picks a node based on:
+
+model name,
+
+GPU VRAM,
+
+current load.
+
+From your perspective as a Rust programmer:
+
+You can treat each node as “OpenAI API clone at http://nodeN:port/v1/chat/completions”.
+
+Your gateway service is just a Rust program that:
+
+Receives requests,
+
+Implements your own routing logic,
+
+Forwards to appropriate node(s),
+
+Normalizes responses.
+
+Option B: llama.cpp via rust bindings (for max model variety)
+Add a second engine:
+
+Use crates like llama_cpp / llama-cpp-2 / llama-cpp-rs to bind into llama.cpp.
+
+Build llama.cpp with:
+
+CUDA enabled,
+
+Optional cuBLAS/Tensor Cores,
+
+Whatever compute capability your Blackwell cards expose.
+
+Why keep this around:
+
+New HF models often appear as GGUF for llama.cpp before they get nice Rust/Candle wrappers.
+
+For quick experiments or niche models, you just:
+
+./download-gguf.sh model-of-the-week,
+
+Spin a new Rust binary that calls llama.cpp through FFI,
+
+Expose a small HTTP API and wire it into your gateway.
+
+4. Rust-native TTS layer
+Option A: Piper via piper-rs (pure Rust)
+For “always works, small footprint”:
+
+Use Piper models (rhasspy/piper-voices) with the piper-rs crate.
+
+CPU-only or modest GPU usage, low memory, many languages/voices.
+
+This is your workhorse for:
+
+System prompts,
+
+Narration,
+
+Background voices where nuance is less critical.
+
+Option B: Candle TTS models
+For higher-quality / neural voices:
+
+Candle has TTS examples for models like MetaVoice-1B and Parler-TTS.
+
+Use the same pattern as with mistral.rs:
+
+One Rust service wraps the Candle TTS model,
+
+Exposes a simple HTTP API: /tts with text → WAV/OGG bytes.
+
+This lets you:
+
+Keep the entire pipeline in Rust (plus any C/BLAS libs).
+
+Use GPU acceleration if Candle + your backend support it.
+
+Option C: Piper + ONNX Runtime (ort)
+If you want:
+
+Hardware acceleration via ONNX Runtime (CUDA, ROCm, DirectML, etc.).
+
+But are okay linking against ONNX’s C++ core.
+
+You can:
+
+Use Piper models exported to ONNX.
+
+Run them via the ort crate in Rust.
+
+Keep your code in Rust, while ONNX Runtime handles low-level kernel optimizations.
+
+Python never has to enter the chat.
+
+5. Rust/Yew/WASM UIs as Gradio replacements
+You already discovered this, but it’s worth leaning in:
+
+For each LLM/TTS “use case”, give yourself a tiny Yew app:
+
+Single page,
+
+Minimal set of controls (text area, some checkboxes, maybe a slider or two).
+
+All state in Rust, compiled to WASM.
+
+Each app talks directly to your gateway HTTP API:
+
+Plain fetch (or gloo/net).
+
+JSON for requests/responses, optionally SSE/WebSockets for streaming.
+
+Benefits over Gradio:
+
+You control the UI exactly; no weird layout or widget limitations.
+
+You can make the UI match your test harness:
+
+For each integration test, there’s a corresponding screen with minimal toggles.
+
+You don’t have to keep up with Gradio/Streamlit breaking changes or Python dependencies.
+
+This meshes nicely with your desire for:
+
+“One screen per test case or workflow” instead of a monolithic multi-mode UI.
+
+Test automation via curl/reqwest first, then UI as frosting.
+
+6. Parallelism & scaling in Rust (your sweet spot)
+Because you’re Rust-first, you can actually exploit your hardware better than typical Python stacks:
+
+Async + multi-thread at every layer:
+
+Each inference service (mistral.rs, llama.cpp wrapper, Piper TTS) can run on a multi-threaded Tokio runtime.
+
+Use backpressure (semaphores) to respect VRAM constraints and queue jobs.
+
+Multi-GPU scheduling:
+
+Your gateway can be aware of:
+
+Node → GPU topology,
+
+Each GPU’s target utilization,
+
+Which models are resident where.
+
+It can implement simple policies:
+
+Round-robin per model,
+
+Prefer underutilized nodes,
+
+Route long prompts to bigger VRAM GPUs.
+
+Because everything is HTTP/JSON, you can re-point UIs and agents without redeploying Python micro-ecosystems.
+
+7. Where Python still makes sense (offline only)
+Given your preferences, this is literally your only Python use case:
+
+Model acquisition & format conversion scripts:
+
+Use Python + HuggingFace tooling once:
+
+Download model,
+
+Convert to GGUF / safetensors / ONNX for your engines.
+
+Save the result in an artifact store (e.g., minio / NAS / models/ directory).
+
+Document with a small convert-model.sh script that:
+
+Spins up a container,
+
+Runs the Python conversion,
+
+Produces a versioned artifact.
+
+Optional: Some eval tooling (if absolutely needed and no Rust equivalent exists), but again this is offline and not part of your main system.
+
+You don’t have to learn “Python as a language to love”; you treat it like an awkward DSL for running conversion scripts occasionally.
+
+8. Summary in your terms
+You’re right: for you, Python is mostly friction — slow, brittle, and ecosystem-heavy in ways that don’t match your hardware or brain.
+
+A Rust-first stack using:
+
+mistral.rs + Candle + llama.cpp + Piper + ONNX Runtime
+
+Rust/Yew/WASM UIs
+
+Rust orchestrator / scheduler
+gives you:
+
+Direct control over parallelism, GPU usage, and deployment.
+
+A UI story that aligns with your test-driven, “one use-case per UI” approach.
+
+Minimal Python, only for offline conversion.
+
+If you’d like, next step we can:
+
+Pick one concrete LLM (say, a Qwen3 or LLaMA3 instruct model) and
+
+One concrete TTS (say, a Piper English voice) and
+
+Sketch out:
+
+A Cargo.toml workspace with:
+
+gateway/ (router + OpenAI API facade),
+
+llm-node/ (mistral.rs or llama.cpp wrapper),
+
+tts-node/ (piper-rs),
+
+ui/ (Yew/WASM front-end),
+
+And a simple HTTP contract so your UIs and agents know how to talk to everything.
+
+You said:
+Yes proceed, but check online for the latest models that fit in 12G VRAM GPUs and would be good for this.  Ensure Rust 2024 edition is used.
+ChatGPT said:
+
+Thought for 2m 5s
+Cool, let’s lock this into something concrete.
+
+You want:
+
+Rust-only runtime (plus C/C++ where needed).
+
+Modern open-weight models that fit in 12 GB VRAM.
+
+A Rust 2024 workspace: gateway, llm-node, tts-node, ui (Yew/WASM).
+
+I’ll first pick specific LLM & TTS models that are a good fit, then show a Rust 2024 workspace layout and how the pieces talk to each other.
+
+1. Model choices that actually fit 12 GB VRAM
+1.1 LLMs (primary targets)
+For a 12 GB card like your RTX 3060, the sweet spot is 7–8B dense models with Q4/Q5 quantization; these fit fully in VRAM with room for KV cache and give decent token throughput. Benchmarks and guidance:
+
+RTX 3060 12 GB can comfortably run 7B GGUF/GPTQ models, even at Q8, with ~25–37 tok/s for 7B on Linux. 
+Hardware Corner
++2
+ThinkMasters
++2
+
+Mistral 7B specifically is reported at ~10–15 tok/s on 8–12 GB VRAM with quantization. 
+Medium
++1
+
+Given that, I’d standardize on three “tiers”:
+
+A. Qwen3-8B-Instruct (general assistant, strongly recommended)
+Why:
+
+Latest generation Qwen3 family (2025), dense 8B model. 
+Open Laboratory
++3
+Cherry Studio
++3
+Hugging Face
++3
+
+Apache-2.0 licensed → commercial-friendly. 
+Sebastian Raschka's Magazine
+
+Designed for 128k context, strong multilingual, reasoning, math, coding, and tool/agent capabilities. 
+Cherry Studio
++2
+Hugging Face
++2
+
+NVIDIA is explicitly pushing Qwen3-8B as an on-device model (ACE plugin), which is a good sign for efficiency on gaming GPUs. 
+NVIDIA Developer
+
+How you’d run it:
+
+Engine: mistral.rs (text model or GGUF text model) or llama.cpp (if GGUF is available).
+
+Target quant: Q4_K_M or Q5_K_M for a 12 GB card.
+
+Use as your default general chat + tool-calling model.
+
+B. Llama-3.1-8B-Instruct (alternate/general assistant)
+Why:
+
+Meta’s Llama 3.1 8B Instruct is widely used, strong on general chat, 131k context, and optimized for inference. 
+Skywork
++3
+Hugging Face
++3
+Meta AI
++3
+
+Open-weight (Meta license), plenty of community GGUFs for llama.cpp, and support in mistral.rs. 
+GitHub
++1
+
+How you’d run it:
+
+Engine: mistral.rs or llama.cpp.
+
+Quantization: again Q4/Q5 fits nicely in 12 GB.
+
+I’d treat Qwen3-8B and Llama-3.1-8B as swap-in alternatives in your config; both are solid.
+
+C. Mistral-7B-Instruct (fallback / small & fast)
+Why:
+
+Well-understood, fast, good quality for 7B. 
+Medium
++1
+
+Very mature support in mistral.rs (it started out Mistral-centric) and llama.cpp. 
+GitHub
++2
+The Register
++2
+
+How you’d run it:
+
+Engine: mistral.rs with GGUF, or pure Candle (e.g. rmistral crate). 
+Docs.rs
++1
+
+Use as a fast, low-latency profile (e.g. edge nodes, small prompts, auxiliary tasks).
+
+1.2 TTS models (baseline + “nicer voices”)
+A. Piper TTS via piper-rs (baseline, robust)
+Piper voices: 5–32M params depending on quality; trivially small vs 12 GB GPU. 
+Rhasspy
++2
+Hugging Face
++2
+
+Piper is fast, runs well even on RPi, and now lives under the Open Home Foundation; future looks safe. 
+GitHub
++2
+Cal Bryant
++2
+
+Rust crate: piper-rs is a pure-Rust integration with Piper models. 
+GitHub
++3
+Crates
++3
+GitHub
++3
+
+Use this for:
+
+System/UI voices, dialog you don’t care to “polish”, and any low-latency, multi-language TTS.
+
+B. Kokoro TTS (higher quality, still tiny)
+Kokoro:
+
+~82M parameters, Apache-2.0, open-weight, and very efficient while outperforming much larger models in TTS benchmarks. 
+Unreal Speech
++3
+Kokoro TTS
++3
+GitHub
++3
+
+Already wired into Rust via sherpa-rs, per Rust community posts. 
+Reddit
+
+Use this when:
+
+You want more polished dialogue / character voices but still want a model you can trivially run on CPU or a sliver of GPU.
+
+C. MetaVoice-1B / Parler-TTS via Candle (premium voices, heavier)
+Candle officially documents support for MetaVoice-1B and Parler-TTS as TTS models. 
+GitHub
++3
+GitHub
++3
+Hugging Face
++3
+
+These are ~1B parameter models: still fine on 12 GB if you’re OK giving them a big chunk of VRAM.
+
+I’d run them on your beefier cards (M40 / bigger VRAM) but they’re still compatible with your “Rust-only runtime” goal via Candle.
+
+2. One Rust 2024 workspace to run it all
+Let’s design the workspace with Rust 2024 edition as the default.
+
+2.1 Directory layout
+ai-stack/
+  rust-toolchain.toml
+  Cargo.toml                # workspace
+  llm-node/                 # mistral.rs-based LLM service
+  tts-node/                 # piper / kokoro / candle TTS service
+  gateway/                  # single API surface (OpenAI-style & TTS)
+  ui/                       # Yew/WASM front-end(s)
+2.2 Root Cargo.toml (workspace)
+[workspace]
+members = [
+    "gateway",
+    "llm-node",
+    "tts-node",
+    "ui",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+anyhow = "1"
+thiserror = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+The [workspace.package] edition = "2024" ensures each crate defaults to the 2024 edition unless overridden.
+
+2.3 rust-toolchain.toml (pin toolchain)
+You’ll want an MSRV compatible with mistral.rs (currently 1.83.0+). 
+GitHub
+
+[toolchain]
+channel = "1.85.0"    # or newer stable once 2024 edition is first-class
+components = ["rustfmt", "clippy"]
+profile = "default"
+3. llm-node: mistral.rs-based LLM server
+Goal: A Rust binary that:
+
+Loads 1–N models (e.g. qwen3-8b-instruct, llama-3.1-8b-instruct, mistral-7b-instruct).
+
+Exposes a local HTTP endpoint, ideally OpenAI-compatible so your gateway can talk to it.
+
+3.1 Dependencies
+llm-node/Cargo.toml:
+
+[package]
+name = "llm-node"
+edition = "2024"
+version = "0.1.0"
+
+[dependencies]
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git" }
+axum = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+The mistralrs crate gives you an async Rust API with builders like TextModelBuilder, GgufModelBuilder, etc. 
+Eric L Buehler
++2
+The Register
++2
+
+3.2 High-level code sketch
+Pseudocode-ish (you’ll fill in actual API calls based on mistralrs docs):
+
+use axum::{routing::post, Router, Json};
+use mistralrs::{GgufModelBuilder, TextGenerationRequest, TextModel};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+#[derive(Clone)]
+struct AppState {
+    // map model_id -> model handle
+    models: Arc<RwLock<Vec<(String, TextModel)>>>,
+}
+
+#[derive(Deserialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    // ...other OpenAI-ish fields (temperature, top_p, etc.)
+}
+
+#[derive(Deserialize)]
+struct ChatMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct ChatResponse {
+    id: String,
+    choices: Vec<ChatChoice>,
+}
+
+#[derive(Serialize)]
+struct ChatChoice {
+    index: usize,
+    message: ChatMessage,
+    // ...
+}
+
+async fn chat_handler(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Json(req): Json<ChatRequest>,
+) -> Json<ChatResponse> {
+    let models = state.models.read().await;
+    let (.., model) = models
+        .iter()
+        .find(|(name, _)| *name == req.model)
+        .expect("model not loaded");
+
+    // Build a mistral.rs request
+    let tg_req = TextGenerationRequest::from_messages(&req.messages);
+    let out = model.generate(tg_req).await.expect("generation failed");
+
+    Json(ChatResponse {
+        id: "chatcmpl-...".into(),
+        choices: vec![ChatChoice {
+            index: 0,
+            message: ChatMessage {
+                role: "assistant".into(),
+                content: out.text,
+            },
+        }],
+    })
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt().with_env_filter("info").init();
+
+    // Example: load Qwen3-8B-Instruct in GGUF (quantized Q4_K_M)
+    // or use a HF id; see mistral.rs docs for exact builder usage.
+    let qwen_model = GgufModelBuilder::new()
+        .model_id("qwen3-8b-instruct-q4_k_m.gguf")
+        .build()
+        .await?;
+
+    let state = AppState {
+        models: Arc::new(RwLock::new(vec![
+            ("qwen3-8b".into(), qwen_model),
+            // add llama-3.1-8b, mistral-7b, etc.
+        ])),
+    };
+
+    let app = Router::new()
+        .route("/v1/chat/completions", post(chat_handler))
+        .with_state(state);
+
+    let addr = "0.0.0.0:9000".parse()?;
+    axum::Server::bind(&addr).serve(app.into_make_service()).await?;
+
+    Ok(())
+}
+Pros:
+
+Fully Rust; no Python aiogunk.
+
+You can run one llm-node per GPU with different models loaded.
+
+It’s easy to add model-level configs (quantization, context length, device mapping) via a TOML file.
+
+Alternatives:
+
+Use the mistralrs-server binary directly and treat it as an external process; your gateway only sees its OpenAI API. 
+GitHub
++2
+Medium
++2
+
+Use llama.cpp bindings for models that are only conveniently available in GGUF.
+
+4. tts-node: Piper/Kokoro/Candle TTS service
+Goal: Simple HTTP service:
+
+POST /v1/audio/speech → returns audio/wav or audio/ogg.
+
+Internally can pick between Piper, Kokoro, or MetaVoice/Parler via config.
+
+4.1 Dependencies
+tts-node/Cargo.toml:
+
+[package]
+name = "tts-node"
+edition = "2024"
+version = "0.1.0"
+
+[dependencies]
+axum = "0.8"
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Baseline TTS
+piper-rs = "0.1"          # Use latest compatible
+# Optional: Kokoro via sherpa-rs (not shown in detail here)
+# sherpa-rs = "..."       # If you decide to use Kokoro
+4.2 High-level handler (Piper baseline)
+Pseudocode-ish again (API surface may differ; see piper-rs examples 
+GitHub
++1
+):
+
+use axum::{routing::post, Router, Json};
+use serde::Deserialize;
+use tokio::sync::Mutex;
+use std::sync::Arc;
+use piper_rs::Synthesizer; // check actual type names from crate
+
+#[derive(Deserialize)]
+struct TtsRequest {
+    text: String,
+    voice: String,     // e.g. "en_US-libritts-high"
+    format: String,    // "wav" or "ogg"
+}
+
+struct AppState {
+    tts: Arc<Mutex<Synthesizer>>,
+}
+
+async fn tts_handler(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Json(req): Json<TtsRequest>,
+) -> axum::response::Response {
+    let mut tts = state.tts.lock().await;
+    let audio_bytes = tts.synthesize(&req.text, &req.voice).await.unwrap();
+
+    // Return as audio/wav (adjust for OGG etc.)
+    axum::response::Response::builder()
+        .header("Content-Type", "audio/wav")
+        .body(axum::body::Full::from(audio_bytes))
+        .unwrap()
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt().with_env_filter("info").init();
+
+    // Initialize Piper with a default voice model; model paths from config
+    let synthesizer = Synthesizer::from_files(
+        "models/en_US-libritts-high.onnx",
+        "models/en_US-libritts-high.json",
+    )?;
+
+    let state = AppState {
+        tts: Arc::new(Mutex::new(synthesizer)),
+    };
+
+    let app = Router::new()
+        .route("/v1/audio/speech", post(tts_handler))
+        .with_state(state);
+
+    axum::Server::bind(&"0.0.0.0:9001".parse()?)
+        .serve(app.into_make_service())
+        .await?;
+
+    Ok(())
+}
+Later you can:
+
+Swap in Kokoro (via sherpa-rs) for “premium voices.” 
+Kokoro TTS
++3
+Reddit
++3
+Kokoro TTS
++3
+
+Add a tts_backend field in config to choose Piper vs Kokoro vs Candle TTS.
+
+5. gateway: single entry point (OpenAI-like)
+Goal: The outside world only talks to gateway:
+
+/v1/chat/completions → forwarded to the appropriate llm-node.
+
+/v1/audio/speech → forwarded to tts-node.
+
+Later: /v1/tools/... for agent/tool-calls, etc.
+
+gateway/Cargo.toml:
+
+[package]
+name = "gateway"
+edition = "2024"
+version = "0.1.0"
+
+[dependencies]
+warp = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+High-level behavior:
+
+Parse incoming OpenAI-style JSON.
+
+Use a routing table (e.g. TOML config) to decide:
+
+If model starts with "qwen3-", call http://llm-qwen3:9000/v1/chat/completions.
+
+If model starts with "llama-3.1-", call http://llm-llama31:9000/....
+
+For /v1/audio/speech, always call http://tts-node:9001/v1/audio/speech.
+
+This keeps all model-specific complexity out of your UI and out of other agents.
+
+6. ui: Yew/WASM (Rust 2024)
+Goal: multiple small, testable UIs instead of one huge “modeful” app.
+
+ui/Cargo.toml:
+
+[package]
+name = "ui"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+yew = { version = "0.21", features = ["csr"] }
+gloo-net = "0.6"           # fetch
+serde.workspace = true
+serde_json.workspace = true
+Each view:
+
+Has its own route or dedicated HTML entrypoint.
+
+Calls gateway with a minimal payload.
+
+Example Yew component for a “chat + TTS” test screen:
+
+#[function_component(App)]
+fn app() -> Html {
+    // state: input text, response text, audio URL/blob, model selection, voice, etc.
+    // use_effect or an event handler to:
+    // 1. POST chat request to /v1/chat/completions
+    // 2. POST TTS request to /v1/audio/speech with the assistant reply
+    // 3. Attach resulting audio blob to <audio> element
+    html! {
+        <div>
+            <textarea /* ... */ />
+            <button /* on_click = send_to_gateway ... */>{"Send"}</button>
+            <pre>{ /* show assistant text */ }</pre>
+            <audio controls=true /* src=blob URL */ />
+        </div>
+    }
+}
+You already know this piece well; main change is just pointing at your new Rust gateway instead of Gradio backends.
+
+7. Next steps I’d actually take
+Pick one LLM & one TTS to start:
+
+LLM: Qwen/Qwen3-8B-Instruct quantized for GGUF or what mistral.rs prefers. 
+Open Laboratory
++3
+Hugging Face
++3
+Qwen
++3
+
+TTS: one Piper English voice (e.g. en_US-libritts-high) via piper-rs. 
+Crates
++3
+Rhasspy
++3
+Hugging Face
++3
+
+Create the workspace skeleton as above and wire:
+
+llm-node → just Qwen3-8B.
+
+tts-node → just Piper.
+
+Define a tiny OpenAI-ish contract in gateway and confirm:
+
+CLI curl scripts can hit chat and audio.
+
+Then add a first Yew UI.
+
+Add alternates:
+
+Llama-3.1-8B & Mistral-7B as additional models in llm-node.
+
+Kokoro as an alternative backend in tts-node.
+
+Scale-out later: per-GPU llm-node instances, a config-driven routing layer, and eventually scheduling based on load.
+
+You said:
+can you put all the code into a downloadable zip file?
+ChatGPT said:
+
+Thought for 19s
+
+Thought for 51s
+Yep! I’ve packaged everything into a workspace and zipped it.
+
+Here’s your download:
+
+➡️ Download the Rust 2024 AI stack skeleton
+
+What’s inside:
+
+rust-toolchain.toml – pins toolchain to 1.85.0, edition 2024.
+
+Cargo.toml – workspace with shared deps.
+
+gateway/ – Warp-based HTTP proxy exposing:
+
+POST /v1/chat/completions → forwards to llm-node.
+
+POST /v1/audio/speech → forwards to tts-node.
+
+llm-node/ – Axum-based LLM stub:
+
+POST /v1/chat/completions
+
+Echoes the last "user" message (ready to be swapped with mistral.rs / llama.cpp).
+
+tts-node/ – Axum-based TTS stub:
+
+POST /v1/audio/speech
+
+Returns a 1s 440 Hz sine-wave WAV (drop in Piper/Kokoro later).
+
+ui/ – Yew/WASM front-end:
+
+Minimal CSR app posting to http://localhost:8080/v1/chat/completions.
+
+You can:
+
+unzip ai-stack.zip
+cd ai-stack
+
+cargo build
+
+# in three terminals:
+cargo run -p llm-node
+cargo run -p tts-node
+cargo run -p gateway
+Then wire up the ui crate with Trunk/wasm-pack or your preferred bundler.
+
+When you’re ready, we can do the next pass where we actually integrate:
+
+mistral.rs with a specific Qwen3-8B / Llama 3.1-8B GGUF,
+
+piper-rs or Kokoro TTS in tts-node. 
+
+
+
+No file chosenNo file chosen
+ChatGPT can make mistakes. Check important info.
+
